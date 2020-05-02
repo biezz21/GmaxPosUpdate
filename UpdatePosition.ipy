@@ -1,0 +1,230 @@
+import pandas as pd
+import numpy as np
+import sys, os
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+from Bio import SeqIO
+import numpy as np
+
+RefVersion = sys.argv[1]
+InputVCF = sys.argv[2]
+
+DBName = '_'.join(InputVCF.split('/')[-1].split('.')[4:])
+
+# V4
+ref_file    = open('./Downloads/ref/glyma.Wm82.gnm4.4PTR.genome_main.fna')
+f           = ref_file.read()
+ref         = f.split('>')
+
+dicfa_v4    = {}
+for x in ref[1:]:
+    title           = x.split('\n')[0].split()[0].split('.')[-1]
+    seq             = ''.join(x.split('\n')[1:])
+    dicfa_v4[title] = seq
+    
+# Select Ref Version
+
+if RefVersion == 'v1':
+    ref_file    = open('./Downloads/ref/glyma.Wm82.gnm1.FCtY.genome_main.fna')
+elif RefVersion == 'v2':
+    ref_file    = open('./Downloads/ref/glyma.Wm82.gnm2.DTC4.genome_main.fna')
+    
+f           = ref_file.read()
+ref         = f.split('>')
+
+dicfa_pre   = {}
+for x in ref[1:]:
+    title            = x.split('\n')[0].split()[0].split('.')[-1]
+    seq              = ''.join(x.split('\n')[1:])
+    dicfa_pre[title] = seq
+
+vcf_mat = pd.read_csv('%s'%InputVCF, compression='gzip',
+                comment='#', sep='\t', header=None)
+
+
+vcf_mat = vcf_mat.dropna(axis=0)
+
+c = ! zcat {InputVCF} | grep '#CHROM'
+vcf_mat.columns = c[0].split('\t')
+
+vcf_mat_sub = vcf_mat[vcf_mat.columns[:9]]
+
+def NormalChr(x):
+    if x.split('_')[0] == 'SCAFFOLD':
+        return x.split('_')[0].lower()+ '_' + x.split('_')[1]
+    else:
+        try:
+            return 'Gm' + x.split('Chr')[1]
+        except IndexError:
+            return x
+
+vcf_mat_sub['#CHROM'] = [NormalChr(x.split('.')[-1]) for x in vcf_mat['#CHROM']]
+
+
+# Filtering INDEL
+
+a = np.array([len(x.split(',')[0]) for x in vcf_mat_sub['ALT']])
+b = np.array([len(x) for x in vcf_mat_sub['REF']])
+
+m_alt = ( a < 2 )
+m_ref = (b < 2)
+m_indel = ['INDEL' not in x.split(';') for x in vcf_mat_sub['INFO']]
+
+m = m_alt & m_ref & m_indel
+vcf_mat_snp = vcf_mat_sub[m]
+
+vcf_mat_snp['ix'] = vcf_mat_snp.apply(lambda x : x['#CHROM']+'-'+str(x['POS']), axis=1)
+vcf_mat_snp_ix = vcf_mat_snp.set_index('ix')
+if RefVersion == 'v1':
+    Pos_InFo = pd.read_csv('./csv_files/PosInFo_v1.csv')
+    ix             = list(Pos_InFo['Pos_v1'])
+elif RefVersion == 'v2':
+    Pos_InFo = pd.read_csv('./csv_files/PosInFo_v2.csv')
+    ix             = list(Pos_InFo['Pos_v2'])
+
+common         = set(ix).intersection(list(vcf_mat_snp['ix']))
+Noncommon      = set(list(vcf_mat_snp['ix'])).difference(ix)
+vcf_mat_None   = vcf_mat_snp_ix.loc[Noncommon]
+
+def MakeSeq(matrix):
+    
+    try:
+        pos = matrix['POS']-1
+        
+        if len(dicfa_pre[matrix['#CHROM']][pos-500:pos+500]) == 1000:
+            
+            Target_seq     = dicfa_pre[matrix['#CHROM']][pos-500:pos+500]
+            Seq_file       = SeqRecord(Seq(Target_seq), id="%s-%s"%(matrix['#CHROM'],str(matrix['POS'])), 
+                                       name='', description = '')
+            
+            seq_all.append(Seq_file)
+            
+            return "Done"
+        else:
+            if pos < 500 and len(dicfa_pre[matrix['#CHROM']][pos:pos+1000]) == 1000:
+                Target_seq     = dicfa_pre[matrix['#CHROM']][pos:pos+1000]
+                Seq_file       = SeqRecord(Seq(Target_seq), id="%s-%s"%(matrix['#CHROM'],str(matrix['POS'])), 
+                                       name='', description = '')
+                
+                seq_all.append(Seq_file)
+                
+                return "x<500"
+            
+            elif len(dicfa_pre[matrix['#CHROM']][pos-999:pos+1]) == 1000:
+                Target_seq   = dicfa_pre[matrix['#CHROM']][pos-999:pos+1]
+                Seq_file       = SeqRecord(Seq(Target_seq), id="%s-%s"%(matrix['#CHROM'],str(matrix['POS'])), 
+                                       name='', description = '')
+                
+                seq_all.append(Seq_file)
+                
+                return "500<x"
+            else:
+                return "%s-%s"%(matrix['#CHROM'],str(matrix['POS']))
+            
+            
+    except KeyError:
+        Err.append(["%s-%s"%(matrix['#CHROM'],str(matrix['POS']))])
+        
+        
+        
+        
+global Err, seq_all
+Err, seq_all = [], []
+
+PositionInfo = vcf_mat_None.apply(lambda x: MakeSeq(x), axis=1)
+SeqIO.write(seq_all, './sample_files/%s.fasta'%DBName, 'fasta')
+
+! bwa mem -t 30 -A 100 -k 1000 ./Downloads/ref/glyma.Wm82.gnm4.4PTR.genome_main.fna ./sample_files/{DBName}.fasta > ./sample_files/{DBName}.sam
+
+df_bwa = pd.read_csv('./sample_files/%s.sam'%DBName, sep='\t', header=None, comment='@', names=range(16))
+
+df_bwa = df_bwa[df_bwa.columns[[0,2,3,5]]]
+df_bwa.columns = ['id', '#CHROM', 'POS', 'align_length']
+m = df_bwa['align_length'] == '1000M'
+df_bwa_matched = df_bwa[m]
+
+if df_bwa_matched.shape[0] == 0:
+    
+    with open('./text_files/%s.txt'% DBName, 'w') as f:
+        f.write('number of sequences : %d\n' % len(seq_all))
+        f.write('number of mapped sequences : %d\n'% list(m).count(True))
+        f.write('Number of unmapped sequences : %d\n'% list(m).count(False))
+        f.write('Position of unmapped sequences\n')
+        for item in df_bwa[~m].id:
+            f.write("%s\n" % item)
+else:
+    
+    with open('./text_files/%s.txt'% DBName, 'w') as f:
+        f.write('number of sequences : %d\n' % len(seq_all))
+        f.write('number of mapped sequences : %d\n'% list(m).count(True))
+        f.write('Number of unmapped sequences : %d\n'% list(m).count(False))
+        f.write('Position of unmapped sequences\n')
+        for item in df_bwa[~m].id:
+            f.write("%s\n" % item)
+    
+    
+    vcf_mat_None['PositionInfo'] = PositionInfo
+    bwa_id = list(df_bwa_matched['id'])
+    vcf_updated = vcf_mat_None.loc[bwa_id]
+
+    bwa_CHROM = [x.split('.')[-1] for x in df_bwa_matched['#CHROM']]
+    df_bwa_matched['#CHROM'] = bwa_CHROM
+
+    def PositionUpdate(x):
+
+        if vcf_updated.loc[x['id']]['PositionInfo'] == 'x<500':
+
+            if dicfa_v4[x['#CHROM']][x['POS']-1] == vcf_updated.loc[x['id']]['REF']:
+
+                ForwardInfo.append(True)
+                return x['POS']
+
+            else:
+
+                ForwardInfo.append(False)
+                return x['POS'] + 999
+
+        elif vcf_updated.loc[x['id']]['PositionInfo'] == '500<x':
+
+            if dicfa_v4[x['#CHROM']][x['POS']+999-1] == vcf_updated.loc[x['id']]['REF']:
+
+                ForwardInfo.append(True)
+                return x['POS'] + 999
+
+            else:
+
+                ForwardInfo.append(False)
+                return x['POS']
+
+        else:
+
+            if dicfa_v4[x['#CHROM']][x['POS']+500-1] == vcf_updated.loc[x['id']]['REF']:
+
+                ForwardInfo.append(True)
+                return x['POS'] + 500
+
+            else:
+
+                ForwardInfo.append(False)
+                return x['POS'] + 500 -1
+
+    global ForwardInfo
+    ForwardInfo = []
+    POS = df_bwa_matched.apply(lambda x : PositionUpdate(x), axis=1)
+
+
+    CHROM = [x.split('.')[-1] for x in df_bwa_matched['#CHROM']]
+
+    v4 = [x + '-' + str(y) for x,y in zip(CHROM, POS)]
+    add_pos = np.array([[x,y,z] for x,y,z in zip(v4, bwa_id, ForwardInfo)])
+
+    try:
+        data = np.concatenate((Pos_InFo.values, add_pos), axis=0)
+
+        Pos_InFo_add = pd.DataFrame(data=data, columns=Pos_InFo.columns)
+        if RefVersion == 'v1':
+            Pos_InFo_add.to_csv('./csv_files/PosInFo_v1.csv', index=False)
+        elif RefVersion == 'v2':
+            Pos_InFo_add.to_csv('./csv_files/PosInFo_v2.csv', index=False)
+    except ValueError:
+        pass

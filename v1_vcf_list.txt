@@ -1,0 +1,7 @@
+./Downloads/VCF_files/v1/glyma.Wm82.gnm1.div.BRR2.SNPs.parents.vcf.gz
+./Downloads/VCF_files/v1/glyma.Wm82.gnm1.div.0TW6.SNPdata.vcf.gz
+./Downloads/VCF_files/v1/glyma.Wm82.gnm1.div.BRR2.SNPs.parents-progeny.vcf.gz
+./Downloads/VCF_files/v1/glyma.Wm82.gnm1.div.BDYN.vcf.gz
+./Downloads/VCF_files/v1/glyma.Wm82.gnm1.div.Z5VC.SNPs.vcf.gz
+./Downloads/VCF_files/v1/glyma.Wm82.gnm1.div.G4BG.SNPs.vcf.gz
+./Downloads/VCF_files/v1/glyma.Wm82.gnm1.div.QXZK.SNPData.vcf.gz
