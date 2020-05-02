@@ -1,10 +1,8 @@
 import pandas as pd
 import numpy as np
-import sys, os
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio import SeqIO
-import numpy as np
 
 RefVersion = sys.argv[1]
 InputVCF = sys.argv[2]
