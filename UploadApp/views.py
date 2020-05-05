@@ -34,12 +34,12 @@ def UploadView(request):
         # Select Ref Version
         if refversion == 'Glycine max accession Williams genome assembly v1.0':
             ref_file    = open(os.path.join(settings.MEDIA_ROOT, 'glyma.Wm82.gnm1.FCtY.genome_main.fna'))
-            df = pd.DataFrame(list(V1Model.objects.all().values()), columns=['Pos_v4','Pos_pre','Pos_pre_Info'])
-            ix = list(df['Pos_pre'])
+            df = pd.DataFrame(list(V1Model.objects.all().values()))
+            ix = list(df['Pos_v1'])
         elif refversion == 'Glycine max accession Williams 82 genome assembly v2.0':
             ref_file    = open(os.path.join(settings.MEDIA_ROOT, 'glyma.Wm82.gnm2.DTC4.genome_main.fna'))
-            df = pd.DataFrame(list(V1Model.objects.all().values()), columns=['Pos_v4','Pos_pre','Pos_pre_Info'])
-            ix = list(df['Pos_pre'])
+            df = pd.DataFrame(list(V1Model.objects.all().values()))
+            ix = list(df['Pos_v2'])
             
         f           = ref_file.read()
         ref         = f.split('>')
@@ -49,6 +49,8 @@ def UploadView(request):
             title            = x.split('\n')[0].split()[0].split('.')[-1]
             seq              = ''.join(x.split('\n')[1:])
             dicfa_pre[title] = seq
+
+        df.columns = ['id', 'Pos_v4', 'Pos_pre', 'Pos_pre_Info']
 
         vcf_mat = pd.read_csv('%s'%os.path.join(settings.MEDIA_ROOT, filename), compression='gzip',
                 comment='#', sep='\t', header=None)
@@ -80,11 +82,14 @@ def UploadView(request):
 
         vcf_mat_snp['ix'] = vcf_mat_snp.apply(lambda x : x[0]+'-'+str(x[1]), axis=1)
         vcf_mat_snp_ix = vcf_mat_snp.set_index('ix')
+        vcf_mat_snp_ix_info = vcf_mat_snp_ix[vcf_mat_snp_ix.columns[0:9]]
+        vcf_mat_snp_ix_samples = vcf_mat_snp_ix[vcf_mat_snp_ix.columns[9:]]
+        
 
         common = set(ix).intersection(list(vcf_mat_snp['ix']))
         Noncommon = set(list(vcf_mat_snp['ix'])).difference(ix)
 
-        vcf_mat_common = vcf_mat_snp_ix.loc[common]
+        vcf_mat_common = vcf_mat_snp_ix_info.loc[common]
         df_set = df.set_index('Pos_pre').loc[common]
 
         chrom = [x.split('-')[0] for x in df_set['Pos_v4']]
@@ -97,7 +102,7 @@ def UploadView(request):
             dic_cg = {'A':'T','G':'C','T':'A', 'C':'G'}
             
             
-            if df.loc[x.index]['Pos_pre_Info'] == False:
+            if df_set.loc[x.name]['Pos_pre_Info'] == False:
                 
                 FixREF.append(dic_cg[x[3]])
                 FixALT.append(','.join([dic_cg[i] for i in x[4].split(',')]))
@@ -111,12 +116,14 @@ def UploadView(request):
         global FixREF, FixALT
         FixREF, FixALT = [], []
 
-        abc = vcf_mat_common.apply(lambda x : ReversePosUpdated(x), axis=1)
+        progress = vcf_mat_common.apply(lambda x : ReversePosUpdated(x), axis=1)
 
         vcf_mat_common[3] = FixREF
         vcf_mat_common[4] = FixALT
 
-        
+        vcf_common = pd.merge(vcf_mat_common, vcf_mat_snp_ix_samples.loc[common], left_index=True, right_index=True, how='left')
+
+        vcf_common.to_csv('%s'%os.path.join(settings.MEDIA_ROOT, 'test.csv'), index=False)
         
         
         
