@@ -18,19 +18,7 @@ def UploadView(request):
         vcf_file = request.FILES['vcf_file']
         fs = FileSystemStorage()
         filename = fs.save(vcf_file.name, vcf_file)
-        uploaded_file_url = fs.url(filename)
         refversion = request.POST.get('Refversion')
-
-        # V4
-        # ref_file    = open(os.path.join(settings.MEDIA_ROOT, 'glyma.Wm82.gnm4.4PTR.genome_main.fna'))
-        # f           = ref_file.read()
-        # ref         = f.split('>')
-
-        # dicfa_v4    = {}
-        # for x in ref[1:]:
-        #     title           = x.split('\n')[0].split()[0].split('.')[-1]
-        #     seq             = ''.join(x.split('\n')[1:])
-        #     dicfa_v4[title] = seq
 
         # Select Ref Version
         if refversion == 'Glycine max accession Williams genome assembly v1.0':
@@ -39,7 +27,7 @@ def UploadView(request):
             ix = list(df['Pos_v1'])
         elif refversion == 'Glycine max accession Williams 82 genome assembly v2.0':
             ref_file    = open(os.path.join(settings.MEDIA_ROOT, 'glyma.Wm82.gnm2.DTC4.genome_main.fna'))
-            df = pd.DataFrame(list(V1Model.objects.all().values()))
+            df = pd.DataFrame(list(V2Model.objects.all().values()))
             ix = list(df['Pos_v2'])
             
         f           = ref_file.read()
@@ -56,7 +44,14 @@ def UploadView(request):
         vcf_mat = pd.read_csv('%s'%os.path.join(settings.MEDIA_ROOT, filename), compression='gzip',
                 comment='#', sep='\t', header=None)
 
+        import subprocess
+
+        c = subprocess.check_output(["sh","%s"%os.path.join(settings.MEDIA_ROOT, 'columns.sh'),"%s"%os.path.join(settings.MEDIA_ROOT, filename)], universal_newlines=True)
+        vcf_mat.columns = c.split('\n')[:-1][0].split('\t')
+
         vcf_mat = vcf_mat.dropna(axis=0)
+
+        # vcf_mat.to_csv('%s'% os.path.join(settings.MEDIA_ROOT, 'test.csv'))
 
         # os.system('less %s | grep "#" > %s'%(os.path.join(settings.MEDIA_ROOT, filename), os.path.join(settings.MEDIA_ROOT, 'test.txt')))
 
@@ -69,21 +64,21 @@ def UploadView(request):
                 except IndexError:
                     return x
 
-        vcf_mat[0] = [NormalChr(x.split('.')[-1]) for x in vcf_mat[0]]
+        vcf_mat['#CHROM'] = [NormalChr(x.split('.')[-1]) for x in vcf_mat['#CHROM']]
 
-        # Filtering INDEL
+        # # Filtering INDEL
 
-        a = np.array([len(x.split(',')[0]) for x in vcf_mat[4]])
-        b = np.array([len(x) for x in vcf_mat[3]])
+        a = np.array([len(x.split(',')[0]) for x in vcf_mat['ALT']])
+        b = np.array([len(x) for x in vcf_mat['REF']])
 
         m_alt = ( a < 2 )
         m_ref = (b < 2)
-        m_indel = ['INDEL' not in x.split(';') for x in vcf_mat[7]]
+        m_indel = ['INDEL' not in x.split(';') for x in vcf_mat['INFO']]
 
         m = m_alt & m_ref & m_indel
         vcf_mat_snp = vcf_mat[m]
 
-        vcf_mat_snp['ix'] = vcf_mat_snp.apply(lambda x : x[0]+'-'+str(x[1]), axis=1)
+        vcf_mat_snp['ix'] = vcf_mat_snp.apply(lambda x : x['#CHROM']+'-'+str(x['POS']), axis=1)
         vcf_mat_snp_ix = vcf_mat_snp.set_index('ix')
         vcf_mat_snp_ix_info = vcf_mat_snp_ix[vcf_mat_snp_ix.columns[0:9]]
         vcf_mat_snp_ix_samples = vcf_mat_snp_ix[vcf_mat_snp_ix.columns[9:]]
@@ -98,8 +93,8 @@ def UploadView(request):
         chrom = [x.split('-')[0] for x in df_set['Pos_v4']]
         pos = [x.split('-')[1] for x in df_set['Pos_v4']]
 
-        vcf_mat_common[0] = chrom
-        vcf_mat_common[1] = pos
+        vcf_mat_common['#CHROM'] = chrom
+        vcf_mat_common['POS'] = pos
 
         def ReversePosUpdated(x):
             dic_cg = {'A':'T','G':'C','T':'A', 'C':'G'}
@@ -107,22 +102,22 @@ def UploadView(request):
             
             if df_set.loc[x.name]['Pos_pre_Info'] == False:
                 
-                FixREF.append(dic_cg[x[3]])
-                FixALT.append(','.join([dic_cg[i] for i in x[4].split(',')]))
+                FixREF.append(dic_cg[x['REF']])
+                FixALT.append(','.join([dic_cg[i] for i in x['ALT'].split(',')]))
                 
                 
                 
             else:
-                FixREF.append(x[3])
-                FixALT.append(x[4])
+                FixREF.append(x['REF'])
+                FixALT.append(x['ALT'])
 
         global FixREF, FixALT
         FixREF, FixALT = [], []
 
         progress = vcf_mat_common.apply(lambda x : ReversePosUpdated(x), axis=1)
 
-        vcf_mat_common[3] = FixREF
-        vcf_mat_common[4] = FixALT
+        vcf_mat_common['REF'] = FixREF
+        vcf_mat_common['ATL'] = FixALT
 
         vcf_common = pd.merge(vcf_mat_common, vcf_mat_snp_ix_samples.loc[common], left_index=True, right_index=True, how='left')
 
@@ -135,41 +130,41 @@ def UploadView(request):
         def MakeSeq(matrix):
     
             try:
-                pos = matrix[1]-1
+                pos = matrix['POS']-1
                 
-                if len(dicfa_pre[matrix[0]][pos-500:pos+500]) == 1000:
+                if len(dicfa_pre[matrix['#CHROM']][pos-500:pos+500]) == 1000:
                     
-                    Target_seq     = dicfa_pre[matrix[0]][pos-500:pos+500]
-                    Seq_file       = SeqRecord(Seq(Target_seq), id="%s-%s"%(matrix[0],str(matrix[1])), 
+                    Target_seq     = dicfa_pre[matrix['#CHROM']][pos-500:pos+500]
+                    Seq_file       = SeqRecord(Seq(Target_seq), id="%s-%s"%(matrix['#CHROM'],str(matrix['POS'])), 
                                             name='', description = '')
                     
                     seq_all.append(Seq_file)
                     
                     return "Done"
                 else:
-                    if pos < 500 and len(dicfa_pre[matrix[0]][pos:pos+1000]) == 1000:
-                        Target_seq     = dicfa_pre[matrix[0]][pos:pos+1000]
-                        Seq_file       = SeqRecord(Seq(Target_seq), id="%s-%s"%(matrix[0],str(matrix[1])), 
+                    if pos < 500 and len(dicfa_pre[matrix['#CHROM']][pos:pos+1000]) == 1000:
+                        Target_seq     = dicfa_pre[matrix['#CHROM']][pos:pos+1000]
+                        Seq_file       = SeqRecord(Seq(Target_seq), id="%s-%s"%(matrix['#CHROM'],str(matrix['POS'])), 
                                             name='', description = '')
                         
                         seq_all.append(Seq_file)
                         
                         return "x<500"
                     
-                    elif len(dicfa_pre[matrix[0]][pos-999:pos+1]) == 1000:
-                        Target_seq   = dicfa_pre[matrix[0]][pos-999:pos+1]
-                        Seq_file       = SeqRecord(Seq(Target_seq), id="%s-%s"%(matrix[0],str(matrix[1])), 
+                    elif len(dicfa_pre[matrix['#CHROM']][pos-999:pos+1]) == 1000:
+                        Target_seq   = dicfa_pre[matrix['#CHROM']][pos-999:pos+1]
+                        Seq_file       = SeqRecord(Seq(Target_seq), id="%s-%s"%(matrix['#CHROM'],str(matrix['POS'])), 
                                             name='', description = '')
                         
                         seq_all.append(Seq_file)
                         
                         return "500<x"
                     else:
-                        return "%s-%s"%(matrix[0],str(matrix[1]))
+                        return "%s-%s"%(matrix['#CHROM'],str(matrix['POS']))
                     
                     
             except KeyError:
-                Err.append(["%s-%s"%(matrix[0],str(matrix[1]))])
+                Err.append(["%s-%s"%(matrix['#CHROM'],str(matrix['POS']))])
                 
                 
                 
@@ -251,12 +246,13 @@ def UploadView(request):
             POS = df_bwa_matched.apply(lambda x : PositionUpdate(x), axis=1)
             CHROM = list(df_bwa_matched['#CHROM'])
 
-            vcf_updated[0] = CHROM
-            vcf_updated[1] = pos
+            vcf_updated = vcf_updated[vcf_updated.columns[:-1]]
+
+            vcf_updated['#CHROM'] = CHROM
+            vcf_updated['POS'] = POS
             vcf_updated['strand'] = ForwardInfo
             Pos_v4 = list(vcf_updated.index)
 
-            vcf_updated = vcf_updated[vcf_updated.columns[:-1]]
 
             def ReversePosUpdated(x):
                 dic_cg = {'A':'T','G':'C','T':'A', 'C':'G'}
@@ -264,23 +260,23 @@ def UploadView(request):
                 
                 if x['strand'] == False:
                     
-                    FixREF2.append(dic_cg[x[3]])
-                    FixALT2.append(','.join([dic_cg[i] for i in x[4].split(',')]))
+                    FixREF2.append(dic_cg[x['REF']])
+                    FixALT2.append(','.join([dic_cg[i] for i in x['ALT'].split(',')]))
                     
                     
                     
                 else:
-                    FixREF2.append(x[3])
-                    FixALT2.append(x[4])
+                    FixREF2.append(x['REF'])
+                    FixALT2.append(x['ALT'])
 
             global FixREF2, FixALT2
             FixREF2, FixALT2 = [], []
 
             progress = vcf_updated.apply(lambda x : ReversePosUpdated(x), axis=1)
 
-            vcf_updated[3] = FixREF2
-            vcf_updated[4] = FixALT2
-            vcf_updated = vcf_updated[vcf_updated[:-1]]
+            vcf_updated['REF'] = FixREF2
+            vcf_updated['ALT'] = FixALT2
+            vcf_updated = vcf_updated[vcf_updated.columns[:-1]]
             vcf_non = pd.merge(vcf_updated, vcf_mat_snp_ix_samples.loc[bwa_id], left_index=True, right_index=True, how='left')
             # vcf_non.to_csv('%s'%os.path.join(settings.MEDIA_ROOT, 'test.csv'), index=False)
             chr_pos = [x+'-'+str(pos) for x,y in zip(CHROM, pos)]
@@ -310,30 +306,29 @@ def UploadView(request):
             df_result = vcf_common
 
         # df_result.to_csv('%s'%os.path.join(settings.MEDIA_ROOT, 'test.csv'), index=False)
-        header = """
-                """
+
+        header = '''##reference=glyma.Wm82.gnm4.4PTR.genome_main.fna\n'''
         output_VCF = '%s'%os.path.join(settings.MEDIA_ROOT, 'output.vcf')
         with open(output_VCF, 'w') as vcf:
             vcf.write(header)
 
         df_result.to_csv(output_VCF, sep="\t", mode='a', index=False)
 
-        with open('%s'%os.path.join(settings.MEDIA_ROOT, 'output.vcf'), 'rb') as f_in:
-            with gzip.open('%s'%os.path.join(settings.MEDIA_ROOT, 'output.vcf.gz'), 'wb') as f_out:
-                shutil.copyfileobj(f_in, f_out)
+        # with open('%s'%os.path.join(settings.MEDIA_ROOT, 'output.vcf'), 'rb') as f_in:
+        #     with gzip.open('%s'%os.path.join(settings.MEDIA_ROOT, 'output.vcf.gz'), 'wb') as f_out:
+        #         shutil.copyfileobj(f_in, f_out)
 
         
-
+        uploaded_file_url = fs.url('output.vcf')
             
 
 
         
         obj_output = {
-            'uploaded_file_url': os.path.join(settings.MEDIA_ROOT, 'output.vcf.gz'),
-            'refversion': refversion,
-        }
+            'uploaded_file_url': uploaded_file_url,
+            }
 
         fs.delete(vcf_file.name)
-        return render(request, 'download.html', obj_output)
+        return render(request, 'upload.html', obj_output)
 
     return render(request, 'upload.html')
